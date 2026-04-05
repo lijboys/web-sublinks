@@ -1,5 +1,5 @@
-// Version: 11.5.0 [2026-04-05]
-// Feature: 布局终极平衡 - 左侧(输入+模板+生成) vs 右侧(基础+高级设置)，高度完美对齐。
+// Version: 12.0.0 [2026-04-05]
+// Feature: 紧急寻回“免存长链(Base64)”功能，并将其完美融入新版 UI 与解析引擎。
 
 const CONFIG = { KV_TMPL_KEY: "__sys_cloud_templates__" };
 
@@ -175,35 +175,50 @@ export default {
       } catch(e) { return new Response('Format Error', { status: 400 }); }
     }
 
+    // ====================================================
+    // 下发路由 (兼容 免存长链 与 KV短链)
+    // ====================================================
     if (url.pathname.startsWith('/sub')) {
-      let cfg = null;
+      let cfg = {};
       const shortId = url.pathname.split('/')[2];
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
       try {
-        if (!env.MY_KV) return new Response('KV ERROR', { status: 500 });
-        if (!shortId) return new Response('Invalid ID', { status: 400 });
-
-        const kvData = await env.MY_KV.get(shortId);
-        if (!kvData) return new Response('404: 订阅不存在或已被销毁', { status: 404 });
-        
-        cfg = JSON.parse(kvData);
-        if (!cfg.accessedIPs) cfg.accessedIPs = [];
-
-        if (cfg.burn) {
-          await env.MY_KV.delete(shortId);
-        } else {
-          const now = Date.now();
-          const isExpired = (cfg.expireAt && now > cfg.expireAt) || (cfg.expireDays && now > cfg.createdAt + cfg.expireDays * 86400000);
-          if (isExpired) { await env.MY_KV.delete(shortId); return new Response('410: 订阅已过期', { status: 410 }); }
-          if (cfg.maxDownloads) {
-             if (!cfg.accessedIPs.includes(clientIP)) {
-                 if (cfg.accessedIPs.length >= cfg.maxDownloads) return new Response(`403: IP 上限拦截\\nIP: ${clientIP}`, { status: 403 });
-                 cfg.accessedIPs.push(clientIP); await env.MY_KV.put(shortId, JSON.stringify(cfg));
-             }
+        // 1. 如果是免存长链 (包含 ?data=xxx)
+        if (url.searchParams.get('data')) {
+           cfg.links = decodeURIComponent(escape(atob(url.searchParams.get('data'))));
+           const tmplB64 = url.searchParams.get('tmpl');
+           if (tmplB64) cfg.tmplUrl = atob(tmplB64);
+           cfg.universal = url.searchParams.get('uni') === '1';
+           cfg.filename = url.searchParams.get('name') || 'My_Config';
+        } 
+        // 2. 如果是 KV 云端短链
+        else {
+          if (!env.MY_KV) return new Response('KV ERROR', { status: 500 });
+          if (!shortId) return new Response('Invalid ID', { status: 400 });
+  
+          const kvData = await env.MY_KV.get(shortId);
+          if (!kvData) return new Response('404: 订阅不存在或已被销毁', { status: 404 });
+          
+          cfg = JSON.parse(kvData);
+          if (!cfg.accessedIPs) cfg.accessedIPs = [];
+  
+          if (cfg.burn) {
+            await env.MY_KV.delete(shortId);
+          } else {
+            const now = Date.now();
+            const isExpired = (cfg.expireAt && now > cfg.expireAt) || (cfg.expireDays && now > cfg.createdAt + cfg.expireDays * 86400000);
+            if (isExpired) { await env.MY_KV.delete(shortId); return new Response('410: 订阅已过期', { status: 410 }); }
+            if (cfg.maxDownloads) {
+               if (!cfg.accessedIPs.includes(clientIP)) {
+                   if (cfg.accessedIPs.length >= cfg.maxDownloads) return new Response(`403: IP 上限拦截\\nIP: ${clientIP}`, { status: 403 });
+                   cfg.accessedIPs.push(clientIP); await env.MY_KV.put(shortId, JSON.stringify(cfg));
+               }
+            }
           }
         }
 
+        // 组装最终响应
         const filename = cfg.filename ? encodeURIComponent(cfg.filename) : 'My_Config';
         let headers = {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -227,7 +242,7 @@ export default {
     const workerDomain = `${url.protocol}//${url.host}/sub`;
 
     // ====================================================
-    // 前端 Web UI (完美平衡双栏布局)
+    // 前端 Web UI
     // ====================================================
     const html = `
     <!DOCTYPE html>
@@ -248,7 +263,7 @@ export default {
         
         [data-theme="dark"] {
           --bg-color: #0f172a; --text-main: #f8fafc; --text-muted: #94a3b8;
-          --glass-bg: rgba(15, 23, 42, 0.6); --glass-border: rgba(255, 255, 255, 0.1); --input-bg: rgba(0, 0, 0, 0.2); --input-border: rgba(255, 255, 255, 0.1);
+          --glass-bg: rgba(15, 23, 42, 0.65); --glass-border: rgba(255, 255, 255, 0.1); --input-bg: rgba(0, 0, 0, 0.2); --input-border: rgba(255, 255, 255, 0.1);
           --inner-highlight: inset 0 1px 1px rgba(255, 255, 255, 0.05);
           --shadow-card: 0 15px 35px -5px rgba(0, 0, 0, 0.4);
         }
@@ -273,9 +288,7 @@ export default {
         .header h1 { font-size: 32px; font-weight: 800; margin: 0 0 10px 0; letter-spacing: -0.5px; background: linear-gradient(135deg, var(--primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
         .header p { color: var(--text-muted); font-size: 15px; margin: 0; font-weight: 500; text-shadow: 0 1px 2px rgba(0,0,0,0.1);}
 
-        /* 极致平衡双栏栅格 */
         .grid-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; align-items: start; }
-        
         .col-left { display: flex; flex-direction: column; gap: 24px; position: sticky; top: 32px; transform: translateZ(0); }
         .col-right { display: flex; flex-direction: column; gap: 24px; transform: translateZ(0); }
 
@@ -391,7 +404,10 @@ export default {
               </div>
             </div>
 
-            <button class="btn-primary" id="generateBtn" onclick="generateLink()">🚀 生成订阅链接</button>
+            <div style="display: flex; gap: 16px;">
+              <button class="btn-primary" id="generateBtn" onclick="generateLink()" style="flex: 2;">🚀 生成云端短链</button>
+              <button class="btn-primary" id="generateLongBtn" onclick="generateLong()" style="flex: 1; background: var(--input-bg); color: var(--text-main); border: 1px solid var(--input-border); box-shadow: none;">🎈 免存长链</button>
+            </div>
 
             <div id="resultArea" class="card hidden" style="border: 2px solid var(--success) !important; margin-bottom: 0; box-shadow: 0 8px 24px rgba(16, 185, 129, 0.15);">
               <div style="color: var(--success); font-weight: 800; font-size: 16px; margin-bottom: 16px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
@@ -448,7 +464,7 @@ export default {
                 <label class="switch"><input type="checkbox" id="burnMode"><span class="slider"></span></label>
               </div>
               <div class="row">
-                <div class="row-text"><strong>伪装流量面板</strong><span>展示饼图及到期日期</span></div>
+                <div class="row-text"><strong>伪装流量数据</strong><span>展示饼图及到期日期</span></div>
                 <label class="switch"><input type="checkbox" onchange="document.getElementById('trafficArea').classList.toggle('hidden')"><span class="slider"></span></label>
               </div>
               <div id="trafficArea" class="hidden traffic-grid">
@@ -643,8 +659,10 @@ export default {
           }
         }
 
+        // --- 生成云端短链 ---
         async function generateLink() {
           const btn = document.getElementById('generateBtn');
+          const oldText = btn.innerText;
           btn.innerText = '⏳ 处理中...';
           try {
             const links = await getFinalInputText();
@@ -689,7 +707,37 @@ export default {
             document.getElementById('resultArea').classList.remove('hidden');
           } catch(e) {
             alert('❌ 失败: ' + e.message);
-          } finally { btn.innerText = '🚀 生成订阅链接'; }
+          } finally { btn.innerText = oldText; }
+        }
+
+        // --- 生成免存长链 ---
+        async function generateLong() {
+          const btn = document.getElementById('generateLongBtn');
+          const originalText = btn.innerText;
+          btn.innerText = '⏳ 打包中...';
+          try {
+            const links = await getFinalInputText();
+            if (!links) throw new Error('解析到的内容为空');
+
+            const encodedData = btoa(unescape(encodeURIComponent(links)));
+            let finalUrl = domain + '?data=' + encodedData;
+            
+            if (document.getElementById('universal').checked) {
+               finalUrl += '&uni=1';
+            } else if (currentSelectedUrl) {
+               finalUrl += '&tmpl=' + btoa(currentSelectedUrl);
+            }
+            
+            const filename = document.getElementById('filename').value.trim();
+            if (filename) finalUrl += '&name=' + encodeURIComponent(filename);
+
+            document.getElementById('subUrl').value = finalUrl;
+            document.getElementById('resultArea').classList.remove('hidden');
+            
+            alert('💡 提示：您生成了免存长链。因为数据并未存入云端，右侧面板中的「安全控制」和「流量面板」功能对长链无效。但配置改名与路由模板依然生效！');
+          } catch(e) {
+            alert('❌ 失败: ' + e.message);
+          } finally { btn.innerText = originalText; }
         }
 
         async function copyUrl() { document.getElementById('subUrl').select(); try { await navigator.clipboard.writeText(document.getElementById('subUrl').value); alert('✅ 链接已复制！');} catch(e){} }
