@@ -68,7 +68,6 @@
 
 ## 📸 界面预览
 
-*(建议在这里贴上你的几张截图：如日间/夜间模式、高级选项、模板选择面板等)*
 <img src="https://raw.githubusercontent.com/lijboys/web-sublinks/refs/heads/main/img/1.png" width="600">
 <img src="https://raw.githubusercontent.com/lijboys/web-sublinks/refs/heads/main/img/2.png" width="600">
 <img src="https://raw.githubusercontent.com/lijboys/web-sublinks/refs/heads/main/img/3.png" width="600">
