@@ -1,5 +1,5 @@
-// Version: 9.1.0 (紧急修复: 修复模板卡片因JS报错导致空白的问题)
-// Date: 2026-04-05
+// Version: 11.5.0 [2026-04-05]
+// Feature: 布局终极平衡 - 左侧(输入+模板+生成) vs 右侧(基础+高级设置)，高度完美对齐。
 
 const CONFIG = { KV_TMPL_KEY: "__sys_cloud_templates__" };
 
@@ -8,7 +8,7 @@ export default {
     const url = new URL(request.url);
 
     // ====================================================
-    // API: 云端模板管理
+    // API 路由
     // ====================================================
     if (url.pathname === '/api/tmpl') {
       if (!env.MY_KV) return new Response('[]', { status: 200 });
@@ -27,26 +27,41 @@ export default {
       }
     }
 
-    // ====================================================
-    // API: 代为拉取外部订阅链接 (绕过跨域限制)
-    // ====================================================
     if (url.pathname === '/api/fetch' && request.method === 'POST') {
       try {
         const body = await request.json();
         if (!body.subUrl) return new Response('No URL', { status: 400 });
-        const res = await fetch(body.subUrl, {
-          headers: { 'User-Agent': 'ClashMeta/1.14.0' } 
-        });
+        const res = await fetch(body.subUrl, { headers: { 'User-Agent': 'ClashMeta/1.14.0' } });
         if (!res.ok) throw new Error('拉取失败');
         return new Response(await res.text(), { status: 200 });
-      } catch (e) {
-        return new Response(e.message, { status: 500 });
-      }
+      } catch (e) { return new Response(e.message, { status: 500 }); }
     }
 
     // ====================================================
-    // 核心解析器：支持 Base64 & Clash YAML & 各种链接
+    // 核心解析器
     // ====================================================
+    const addFlag = (name) => {
+      if (/🇭🇰|🇹🇼|🇯🇵|🇸🇬|🇰🇷|🇺🇸|🇬🇧|🇫🇷|🇩🇪|🇳🇱|🇷🇺/.test(name)) return name;
+      const rules = [
+        { regex: /HK|Hong Kong|香港|深港|广港|沪港/i, flag: '🇭🇰' },
+        { regex: /TW|Taiwan|台湾|台灣|台北|新北|广台/i, flag: '🇹🇼' },
+        { regex: /JP|Japan|日本|东京|大阪|埼玉|广日/i, flag: '🇯🇵' },
+        { regex: /SG|Singapore|新加坡|狮城|广新/i, flag: '🇸🇬' },
+        { regex: /KR|Korea|韩国|首尔|春川|广韩/i, flag: '🇰🇷' },
+        { regex: /US|America|United States|美国|洛杉矶|圣何塞|纽约|西雅图|芝加哥|波特兰|达拉斯|广美/i, flag: '🇺🇸' },
+        { regex: /UK|Britain|英国|伦敦/i, flag: '🇬🇧' },
+        { regex: /FR|France|法国|巴黎/i, flag: '🇫🇷' },
+        { regex: /DE|Germany|德国|法兰克福/i, flag: '🇩🇪' },
+        { regex: /NL|Netherlands|荷兰|阿姆斯特丹/i, flag: '🇳🇱' },
+        { regex: /RU|Russia|俄罗斯|莫斯科/i, flag: '🇷🇺' },
+        { regex: /IN|India|印度|孟买/i, flag: '🇮🇳' },
+        { regex: /AU|Australia|澳大利亚|悉尼/i, flag: '🇦🇺' },
+        { regex: /CA|Canada|加拿大|蒙特利尔/i, flag: '🇨🇦' }
+      ];
+      for (let r of rules) if (r.regex.test(name)) return `${r.flag} ${name}`;
+      return name;
+    };
+
     const tryDecodeBase64 = (str) => {
       try {
         const cleanStr = str.replace(/\s/g, '');
@@ -69,7 +84,6 @@ export default {
     const parseLinksToArray = (linksStr) => {
       let processedStr = tryDecodeBase64(linksStr);
       processedStr = extractProxies(processedStr);
-      
       const links = processedStr.split('\n').map(l => l.trim()).filter(l => l);
       let proxies = [];
       let nameCount = {};
@@ -88,32 +102,28 @@ export default {
 
       for (let link of links) {
         try {
-          if (link.startsWith('- {') || link.startsWith('- name:')) {
-             proxies.push(`  ${link}`);
-             continue;
-          }
-
+          if (link.startsWith('- {') || link.startsWith('- name:')) { proxies.push(`  ${link}`); continue; }
           if (link.startsWith('vless://')) {
             const u = new URL(link);
-            const name = getUniqueName(decodeURIComponent(u.hash.substring(1)), 'vless');
+            const rawName = addFlag(decodeURIComponent(u.hash.substring(1)));
+            const name = getUniqueName(rawName, 'vless');
             let proxy = `  - {name: "${name}", server: "${u.hostname}", port: ${u.port}, type: vless, uuid: "${u.username}"`;
             if (u.searchParams.get('security') === 'reality') {
               proxy += `, tls: true, flow: "${u.searchParams.get('flow') || 'xtls-rprx-vision'}", skip-cert-verify: true, reality-opts: {public-key: "${u.searchParams.get('pbk')}"}`;
               if(u.searchParams.get('sid')) proxy += `, short-id: "${u.searchParams.get('sid')}"`;
               proxy += `, servername: "${u.searchParams.get('sni')}", client-fingerprint: "${u.searchParams.get('fp') || 'chrome'}"`;
             }
-            proxy += `}`;
-            proxies.push(proxy);
+            proxy += `}`; proxies.push(proxy);
           } 
           else if (link.startsWith('hysteria2://')) {
             const u = new URL(link);
-            const name = getUniqueName(decodeURIComponent(u.hash.substring(1)), 'hy2');
+            const name = getUniqueName(addFlag(decodeURIComponent(u.hash.substring(1))), 'hy2');
             const sni = u.searchParams.get('sni') || u.hostname;
             proxies.push(`  - {name: "${name}", server: "${u.hostname}", port: ${u.port}, type: hysteria2, password: "${u.username}", sni: "${sni}", skip-cert-verify: true, alpn: [h3]}`);
           }
           else if (link.startsWith('tuic://')) {
             const u = new URL(link);
-            const name = getUniqueName(decodeURIComponent(u.hash.substring(1)), 'tuic');
+            const name = getUniqueName(addFlag(decodeURIComponent(u.hash.substring(1))), 'tuic');
             const auth = decodeURIComponent(u.username).split(':');
             const sni = u.searchParams.get('sni') || u.hostname;
             proxies.push(`  - {name: "${name}", server: "${u.hostname}", port: ${u.port}, type: tuic, uuid: "${auth[0]}", password: "${auth[1]}", sni: "${sni}", skip-cert-verify: true, alpn: [h3], congestion-controller: bbr, udp-relay-mode: native}`);
@@ -123,20 +133,16 @@ export default {
             const pad = b64.length % 4;
             const paddedB64 = pad ? b64 + '='.repeat(4 - pad) : b64;
             const json = JSON.parse(decodeURIComponent(escape(atob(paddedB64))));
-            const name = getUniqueName(json.ps || "VMess", 'vmess');
-            
+            const name = getUniqueName(addFlag(json.ps || "VMess"), 'vmess');
             let proxy = `  - {name: "${name}", server: "${json.add}", port: ${json.port}, type: vmess, uuid: "${json.id}", alterId: ${json.aid}, cipher: auto`;
             if (json.tls === 'tls') proxy += `, tls: true, skip-cert-verify: true, servername: "${json.host}"`;
             if (json.net === 'ws') proxy += `, network: ws, ws-opts: {path: "${json.path}", headers: {Host: "${json.host}"}}`;
-            proxy += `}`;
-            proxies.push(proxy);
+            proxy += `}`; proxies.push(proxy);
           }
           else if (link.startsWith('ss://') || link.startsWith('trojan://') || link.startsWith('ssr://')) {
              proxies.push(`  # 暂不转换此协议至YAML: ${link}`);
           }
-        } catch (e) {
-          proxies.push(`  # 解析失败: ${link} -> ${e.message}`);
-        }
+        } catch (e) { proxies.push(`  # 解析失败: ${link} -> ${e.message}`); }
       }
       return proxies.join('\n');
     };
@@ -144,43 +150,31 @@ export default {
     const buildConfig = async (rawLinks, tmplUrl) => {
       const proxiesStr = parseLinksToArray(rawLinks);
       if (!tmplUrl) return "proxies:\n" + proxiesStr;
-
       let tmplText = "";
       try {
         const res = await fetch(tmplUrl);
         if (!res.ok) throw new Error("Fetch failed");
         tmplText = await res.text();
-      } catch (err) {
-        return "proxies:\n  - {name: '加载远程模板失败', type: direct}\n" + proxiesStr;
-      }
+      } catch (err) { return "proxies:\n  - {name: '加载远程模板失败', type: direct}\n" + proxiesStr; }
 
       let finalConfig = tmplText.replace(/^proxies:.*$/m, `proxies:\n${proxiesStr}`);
       if (finalConfig === tmplText) finalConfig = tmplText + "\nproxies:\n" + proxiesStr;
       return finalConfig;
     };
 
-    // ====================================================
-    // API: 保存设置到 KV
-    // ====================================================
     if (request.method === 'POST' && url.pathname === '/api/shorten') {
       if (!env.MY_KV) return new Response('KV NOT FOUND', { status: 500 });
       try {
         const payload = await request.json();
         if (!payload.links) return new Response('Empty', { status: 400 });
-
         const shortId = payload.alias ? encodeURIComponent(payload.alias) : Math.random().toString(36).substring(2, 8);
         payload.createdAt = Date.now();
         payload.accessedIPs = []; 
         await env.MY_KV.put(shortId, JSON.stringify(payload));
         return new Response(shortId, { status: 200 });
-      } catch(e) {
-        return new Response('Format Error', { status: 400 });
-      }
+      } catch(e) { return new Response('Format Error', { status: 400 }); }
     }
 
-    // ====================================================
-    // 下发路由
-    // ====================================================
     if (url.pathname.startsWith('/sub')) {
       let cfg = null;
       const shortId = url.pathname.split('/')[2];
@@ -201,12 +195,10 @@ export default {
         } else {
           const now = Date.now();
           const isExpired = (cfg.expireAt && now > cfg.expireAt) || (cfg.expireDays && now > cfg.createdAt + cfg.expireDays * 86400000);
-          if (isExpired) {
-             await env.MY_KV.delete(shortId); return new Response('410: 订阅已过期', { status: 410 });
-          }
+          if (isExpired) { await env.MY_KV.delete(shortId); return new Response('410: 订阅已过期', { status: 410 }); }
           if (cfg.maxDownloads) {
              if (!cfg.accessedIPs.includes(clientIP)) {
-                 if (cfg.accessedIPs.length >= cfg.maxDownloads) return new Response(`403: IP 上限`, { status: 403 });
+                 if (cfg.accessedIPs.length >= cfg.maxDownloads) return new Response(`403: IP 上限拦截\\nIP: ${clientIP}`, { status: 403 });
                  cfg.accessedIPs.push(clientIP); await env.MY_KV.put(shortId, JSON.stringify(cfg));
              }
           }
@@ -235,7 +227,7 @@ export default {
     const workerDomain = `${url.protocol}//${url.host}/sub`;
 
     // ====================================================
-    // 前端 Web UI
+    // 前端 Web UI (完美平衡双栏布局)
     // ====================================================
     const html = `
     <!DOCTYPE html>
@@ -246,108 +238,106 @@ export default {
       <title>⚡ Pro 订阅控制台</title>
       <style>
         :root {
-          --bg-color: #f8fafc; --text-main: #0f172a; --text-muted: #475569; 
-          --primary: #4f46e5; --accent: #0ea5e9; --danger: #ef4444;
-          --success: #10b981; --warning: #f59e0b;
-          --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); 
-          --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-          
-          --glass-bg: rgba(255, 255, 255, 0.78);
-          --glass-border: rgba(255, 255, 255, 0.6);
-          --input-bg: rgba(255, 255, 255, 0.5);
+          --primary: #4f46e5; --primary-hover: #4338ca; --accent: #0ea5e9; --danger: #ef4444; --success: #10b981; --warning: #f59e0b;
+          --bg-color: #f1f5f9; --text-main: #0f172a; --text-muted: #64748b; 
+          --glass-bg: rgba(255, 255, 255, 0.4); --glass-border: rgba(255, 255, 255, 0.5); --input-bg: rgba(255, 255, 255, 0.6); --input-border: rgba(15, 23, 42, 0.1);
+          --inner-highlight: inset 0 1px 1px rgba(255, 255, 255, 0.8);
+          --shadow-card: 0 10px 30px -10px rgba(0, 0, 0, 0.08);
+          --blur-radius: 16px;
         }
         
         [data-theme="dark"] {
-          --bg-color: #0f172a; --text-main: #f8fafc; --text-muted: #cbd5e1;
-          --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
-          --glass-bg: rgba(15, 23, 42, 0.75);
-          --glass-border: rgba(255, 255, 255, 0.1);
-          --input-bg: rgba(0, 0, 0, 0.3);
+          --bg-color: #0f172a; --text-main: #f8fafc; --text-muted: #94a3b8;
+          --glass-bg: rgba(15, 23, 42, 0.6); --glass-border: rgba(255, 255, 255, 0.1); --input-bg: rgba(0, 0, 0, 0.2); --input-border: rgba(255, 255, 255, 0.1);
+          --inner-highlight: inset 0 1px 1px rgba(255, 255, 255, 0.05);
+          --shadow-card: 0 15px 35px -5px rgba(0, 0, 0, 0.4);
         }
 
-        body { 
-          font-family: 'Inter', system-ui, -apple-system, sans-serif; 
-          background-color: var(--bg-color); color: var(--text-main); 
-          margin: 0; padding: 40px 20px; display: flex; justify-content: center; 
-          transition: background-color 0.3s, color 0.3s;
-        }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.5); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(156, 163, 175, 0.8); }
+
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 40px 20px; display: flex; justify-content: center; line-height: 1.6; transition: background-color 0.4s, color 0.4s; }
 
         ${bgImg ? `
         body { background-image: url('${bgImg}'); background-size: cover; background-position: center; background-attachment: fixed; }
-        .card, .tmpl-card, .upload-area {
-          background: var(--glass-bg) !important; 
-          backdrop-filter: blur(24px) saturate(150%); -webkit-backdrop-filter: blur(24px) saturate(150%); 
-          border: 1px solid var(--glass-border) !important;
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
+        .card, .theme-toggle { background: var(--glass-bg) !important; backdrop-filter: blur(var(--blur-radius)) saturate(180%); -webkit-backdrop-filter: blur(var(--blur-radius)) saturate(180%); border: 1px solid var(--glass-border) !important; }
+        ` : ''}
+
+        .card { box-shadow: var(--shadow-card), var(--inner-highlight); }
+        .container { width: 100%; max-width: 1100px; position: relative; z-index: 10; }
+        
+        .header { text-align: center; margin-bottom: 40px; transition: color 0.3s; }
+        .header h1 { font-size: 32px; font-weight: 800; margin: 0 0 10px 0; letter-spacing: -0.5px; background: linear-gradient(135deg, var(--primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
+        .header p { color: var(--text-muted); font-size: 15px; margin: 0; font-weight: 500; text-shadow: 0 1px 2px rgba(0,0,0,0.1);}
+
+        /* 极致平衡双栏栅格 */
+        .grid-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; align-items: start; }
+        
+        .col-left { display: flex; flex-direction: column; gap: 24px; position: sticky; top: 32px; transform: translateZ(0); }
+        .col-right { display: flex; flex-direction: column; gap: 24px; transform: translateZ(0); }
+
+        @media (max-width: 900px) {
+          body { padding: 30px 16px; }
+          .grid-layout { grid-template-columns: 1fr; gap: 24px; }
+          .col-left { position: relative; top: 0; }
         }
-        textarea, input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], select {
-          background: var(--input-bg) !important;
-          border: 1px solid var(--glass-border) !important;
-          backdrop-filter: blur(10px);
-        }
-        .text-shadow { text-shadow: 0 1px 2px rgba(0,0,0,0.1); }
-        [data-theme="dark"] .text-shadow { text-shadow: 0 1px 3px rgba(0,0,0,0.8); }
-        .header h1, .header p { text-shadow: 0 2px 8px rgba(0,0,0,0.5); color: #fff !important; }
-        ` : '.text-shadow {}'}
 
-        .container { width: 100%; max-width: 720px; position: relative; z-index: 10; }
-        
-        .theme-toggle { position: fixed; top: 20px; right: 20px; width: 44px; height: 44px; border-radius: 50%; background: var(--glass-bg, var(--panel-bg)); border: 1px solid var(--glass-border); color: var(--text-main); display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: var(--shadow-md); transition: all 0.3s; z-index: 9999; backdrop-filter: blur(20px); }
-        .theme-toggle:hover { transform: scale(1.1); }
+        .theme-toggle { position: fixed; top: 24px; right: 24px; width: 48px; height: 48px; border-radius: 50%; background: var(--bg-color); border: 1px solid var(--input-border); color: var(--text-main); display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer; box-shadow: var(--shadow-card); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 9999; }
+        .theme-toggle:hover { transform: scale(1.05) translateY(-2px); }
 
-        .header { text-align: center; margin-bottom: 30px; transition: color 0.3s; }
-        .header h1 { font-size: 28px; font-weight: 800; margin: 0 0 8px 0; background: linear-gradient(135deg, var(--primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .header p { color: var(--text-muted); font-size: 14px; margin: 0; }
-
-        .card { background: var(--glass-bg, #fff); border: 1px solid var(--glass-border, #e2e8f0); border-radius: 16px; padding: 24px; margin-bottom: 20px; box-shadow: var(--shadow-sm); transition: all 0.3s ease; }
+        .card { background: var(--bg-color); border: 1px solid var(--input-border); border-radius: 20px; padding: 28px; transition: all 0.3s ease; }
+        .card-title { font-size: 17px; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; color: var(--text-main); letter-spacing: -0.3px;}
         
-        .card-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; color: var(--text-main); }
-        
-        .tabs { display: flex; background: var(--input-bg); border-radius: 10px; padding: 4px; margin-bottom: 15px; border: 1px solid var(--glass-border); }
+        .tabs { display: flex; background: var(--input-bg); border-radius: 12px; padding: 6px; margin-bottom: 20px; border: 1px solid var(--input-border); box-shadow: var(--inner-highlight); }
         .tab-btn { flex: 1; padding: 10px; text-align: center; font-size: 14px; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; transition: all 0.2s; user-select: none; }
-        .tab-btn.active { background: var(--primary); color: #fff; box-shadow: var(--shadow-sm); }
+        .tab-btn.active { background: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(79,70,229,0.3); }
         .tab-content { display: none; }
-        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .tab-content.active { display: block; animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-        textarea { width: 100%; height: 160px; padding: 14px; border: 1px solid var(--glass-border); border-radius: 12px; background: var(--input-bg); color: var(--text-main); font-family: 'JetBrains Mono', monospace; font-size: 13px; resize: vertical; box-sizing: border-box; transition: all 0.2s; }
-        textarea:focus, input:focus, select:focus { outline: none; border-color: var(--primary) !important; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2); }
+        textarea, input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], select { width: 100%; padding: 12px 16px; border: 1px solid var(--input-border); border-radius: 12px; background: var(--input-bg); color: var(--text-main); font-size: 14px; font-family: inherit; transition: all 0.2s ease; box-shadow: inset 0 1px 2px rgba(0,0,0,0.02); }
+        textarea { height: 160px; font-family: 'JetBrains Mono', monospace; font-size: 13px; resize: vertical; }
+        textarea:focus, input:focus, select:focus { outline: none; border-color: var(--primary) !important; background: var(--bg-color); box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.15); }
         
-        .upload-area { border: 2px dashed var(--primary); border-radius: 12px; padding: 40px 20px; text-align: center; cursor: pointer; color: var(--primary); font-weight: 600; transition: all 0.2s; background: rgba(79, 70, 229, 0.05); }
-        .upload-area:hover { background: rgba(79, 70, 229, 0.1); }
-        .upload-desc { font-size: 12px; color: var(--text-muted); margin-top: 10px; font-weight: normal; }
+        .upload-area { border: 2px dashed var(--primary); border-radius: 16px; padding: 40px 20px; text-align: center; cursor: pointer; color: var(--primary); font-weight: 600; transition: all 0.3s; background: rgba(79, 70, 229, 0.03); }
+        .upload-area:hover { background: rgba(79, 70, 229, 0.08); transform: scale(0.99); }
+        .upload-desc { font-size: 13px; color: var(--text-muted); margin-top: 12px; font-weight: normal; line-height: 1.6;}
 
-        .row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--glass-border); transition: border-color 0.3s;}
+        .row { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--input-border); flex-wrap: wrap; gap: 12px;}
+        .row:first-of-type { padding-top: 0; }
         .row:last-child { border-bottom: none; padding-bottom: 0; }
-        .row-text { flex: 1; }
-        .row-text strong { display: block; font-size: 14px; margin-bottom: 2px; }
-        .row-text span { color: var(--text-muted); font-size: 12px; }
+        .row-text { flex: 1; min-width: 160px; }
+        .row-text strong { display: block; font-size: 15px; margin-bottom: 4px; font-weight: 600; color: var(--text-main);}
+        .row-text span { color: var(--text-muted); font-size: 13px; }
 
-        input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], select { padding: 10px 14px; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--input-bg); color: var(--text-main); font-size: 14px; transition: all 0.2s; }
-        .input-wrap { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
-        
-        .switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+        .input-wrap { display: flex; align-items: center; gap: 12px; flex: 1; justify-content: flex-end; min-width: 180px; }
+
+        .switch { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
         .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(156, 163, 175, 0.5); transition: .3s; border-radius: 24px; }
-        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-        input:checked + .slider { background-color: var(--primary); }
-        input:checked + .slider:before { transform: translateX(20px); }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(148, 163, 184, 0.4); transition: .3s; border-radius: 26px; }
+        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background-color: white; transition: .3s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        input:checked + .slider { background-color: var(--success); }
+        input:checked + .slider:before { transform: translateX(22px); }
 
-        .tmpl-grid { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-        .tmpl-card { padding: 10px 16px; border: 1px solid var(--glass-border); border-radius: 10px; background: var(--input-bg); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; position: relative; color: var(--text-main); }
-        .tmpl-card:hover { border-color: var(--primary); }
-        .tmpl-card.active { border-color: var(--primary) !important; background: rgba(79, 70, 229, 0.15) !important; color: var(--primary) !important; font-weight: bold; }
-        .tmpl-card .del-btn { position: absolute; top:-6px; right:-6px; background: var(--danger); color: white; border-radius: 50%; width: 18px; height: 18px; text-align: center; line-height: 16px; font-size: 12px; display: none; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .tmpl-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+        .tmpl-card { padding: 12px 16px; border: 1px solid var(--input-border); border-radius: 12px; background: var(--input-bg); cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; color: var(--text-muted); flex: 1; min-width: 140px; text-align: center; box-shadow: var(--inner-highlight);}
+        .tmpl-card:hover { border-color: var(--primary); color: var(--text-main); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .tmpl-card.active { border-color: var(--primary) !important; background: rgba(79, 70, 229, 0.1) !important; color: var(--primary) !important; font-weight: 700; }
+        .tmpl-card .del-btn { position: absolute; top:-8px; right:-8px; background: var(--danger); color: white; border-radius: 50%; width: 22px; height: 22px; text-align: center; line-height: 20px; font-size: 14px; display: none; box-shadow: 0 2px 6px rgba(239, 68, 68, 0.4); z-index: 2;}
         .tmpl-card:hover .del-btn { display: block; }
 
-        .btn-primary { width: 100%; padding: 16px; border: none; border-radius: 12px; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 700; font-size: 16px; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); }
-        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4); }
+        .btn-primary { width: 100%; padding: 18px; border: none; border-radius: 16px; background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff; font-weight: 700; font-size: 17px; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 6px 20px rgba(79, 70, 229, 0.3); margin-top: auto; }
+        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 10px 25px rgba(79, 70, 229, 0.4); }
         
-        .alert-box { background: rgba(245, 158, 11, 0.1); border-left: 4px solid var(--warning); padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 15px; font-size: 13px; color: #d97706; }
+        .btn-sub { padding: 12px 18px; border: none; border-radius: 12px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.2s; }
+        
+        .alert-box { background: rgba(245, 158, 11, 0.1); border-left: 4px solid var(--warning); padding: 14px 18px; border-radius: 0 12px 12px 0; margin-top: 16px; font-size: 14px; color: #d97706; line-height: 1.5; }
         .hidden { display: none !important; }
         
-        .traffic-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px dashed var(--glass-border);}
-        .traffic-grid input { width: 100%; box-sizing: border-box; }
+        .traffic-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--input-border);}
       </style>
     </head>
     <body>
@@ -360,110 +350,116 @@ export default {
           <p>商业级订阅分发与安全管理中心</p>
         </div>
 
-        <div class="card text-shadow">
-          <div class="tabs">
-            <div class="tab-btn active" onclick="switchTab('paste')" id="tab-paste">📄 剪贴板</div>
-            <div class="tab-btn" onclick="switchTab('file')" id="tab-file">⬆️ 文件上传</div>
-            <div class="tab-btn" onclick="switchTab('url')" id="tab-url">🔗 订阅链接</div>
-          </div>
+        <div class="grid-layout">
           
-          <div id="content-paste" class="tab-content active">
-            <textarea id="inputLinks" placeholder="支持:&#10;• 单条节点 (vless://, vmess://, tuic://, hy2:// 等)&#10;• Base64 编码的订阅字符串&#10;• 完整的 Clash YAML 配置片段"></textarea>
-          </div>
-          
-          <div id="content-file" class="tab-content">
-            <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
-               <div style="font-size: 24px; margin-bottom: 10px;">📂</div>
-               <div id="fileStatus">点击此处选择文件，或将文件拖拽到此处</div>
-               <div class="upload-desc">仅支持文本格式 (.txt, .yaml, .conf, .json 或无后缀)<br>严禁上传图片、视频、压缩包等非文本文件。</div>
+          <div class="col-left">
+            <div class="card" style="margin-bottom: 0;">
+              <div class="tabs">
+                <div class="tab-btn active" onclick="switchTab('paste')" id="tab-paste">📄 剪贴板</div>
+                <div class="tab-btn" onclick="switchTab('file')" id="tab-file">⬆️ 文件上传</div>
+                <div class="tab-btn" onclick="switchTab('url')" id="tab-url">🔗 订阅链接</div>
+              </div>
+              <div id="content-paste" class="tab-content active">
+                <textarea id="inputLinks" placeholder="支持:&#10;• 单条节点 (vless://, hy2:// 等)&#10;• Base64 订阅密文&#10;• 完整的 Clash YAML 配置"></textarea>
+              </div>
+              <div id="content-file" class="tab-content">
+                <div class="upload-area" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                   <div style="font-size: 32px; margin-bottom: 12px;">📂</div>
+                   <div id="fileStatus" style="font-size: 15px;">点击选择文件，或将文件拖拽到此处</div>
+                   <div class="upload-desc">支持 .txt, .yaml, .json 等文本配置<br>严禁上传图片或压缩包</div>
+                </div>
+                <input type="file" id="fileInput" accept=".txt,.yaml,.yml,.json,.ini,.conf" style="display:none;" onchange="handleFile(this.files[0])">
+              </div>
+              <div id="content-url" class="tab-content">
+                <input type="text" id="inputUrl" placeholder="输入机场订阅链接..." style="padding: 18px;">
+                <div class="upload-desc">由服务器端代为拉取，无视跨域与防火墙拦截。</div>
+              </div>
             </div>
-            <input type="file" id="fileInput" accept=".txt,.yaml,.yml,.json,.ini,.conf" style="display:none;" onchange="handleFile(this.files[0])">
-          </div>
 
-          <div id="content-url" class="tab-content">
-            <input type="text" id="inputUrl" placeholder="输入机场订阅链接 (支持各种协议机场)" style="width: 100%; box-sizing: border-box; padding: 16px;">
-            <div class="upload-desc" style="margin-top: 10px;">点击生成时，系统会从服务器端代为拉取并解析该链接内的节点。</div>
-          </div>
-        </div>
-        
-        <div class="card text-shadow">
-          <div class="card-title">⚙️ 基础设置</div>
-          <div class="row">
-            <div class="row-text"><strong>配置显示名称</strong><span>导入客户端后显示的文件名</span></div>
-            <div class="input-wrap"><input type="text" id="filename" placeholder="如: 我的专属网络" style="width: 160px;"></div>
-          </div>
-          <div class="row">
-            <div class="row-text"><strong>固定链接后缀</strong><span>留空则随机生成</span></div>
-            <div class="input-wrap"><input type="text" id="alias" placeholder="如: myvip" style="width: 160px;"></div>
-          </div>
-          <div class="row">
-            <div class="row-text"><strong>开启通用订阅格式</strong><span>输出 Base64，兼容 v2rayN 等全平台</span></div>
-            <label class="switch"><input type="checkbox" id="universal" onchange="toggleUniversal()"><span class="slider"></span></label>
-          </div>
-          <div id="universalWarning" class="alert-box hidden">
-            ⚠️ <b>注意：</b>开启后，将无法加载路由模板，测速和分流规则将失效！仅当发给非 Clash 客户端时使用。
-          </div>
-        </div>
+            <div class="card" id="tmplPanel" style="margin-bottom: 0;">
+              <div class="card-title">🔗 路由模板挂载 (仅 Clash 生效)</div>
+              <div class="tmpl-grid" id="tmplGrid">加载中...</div>
+              <div class="hidden" id="addTmplArea" style="margin-top:20px;">
+                <div style="display: flex; gap:12px; margin-bottom:12px; flex-wrap: wrap;">
+                  <input type="text" id="newTmplName" placeholder="模板别名" style="flex:1; min-width: 100px;">
+                  <input type="text" id="newTmplUrl" placeholder="https://raw..." style="flex:2; min-width: 180px;">
+                </div>
+                <div style="display: flex; gap:12px;">
+                  <button onclick="saveNewTmpl('local')" class="btn-sub" style="flex:1; background: var(--input-bg); color: var(--text-main); border: 1px solid var(--input-border);">💻 本地存留</button>
+                  <button onclick="saveNewTmpl('cloud')" class="btn-sub" style="flex:1; background: var(--primary); color: white;">☁️ 云端同步</button>
+                </div>
+              </div>
+            </div>
 
-        <div class="card text-shadow" id="tmplPanel">
-          <div class="card-title">🔗 路由模板挂载 (仅 Clash 生效)</div>
-          <div class="tmpl-grid" id="tmplGrid">加载中...</div>
-          <div class="input-wrap hidden" id="addTmplArea" style="margin-top:15px; justify-content: flex-start; flex-wrap: wrap;">
-            <input type="text" id="newTmplName" placeholder="模板别名" style="flex:1; min-width: 120px;">
-            <input type="text" id="newTmplUrl" placeholder="https://raw..." style="flex:2; min-width: 200px;">
-            <button onclick="saveNewTmpl('local')" style="padding: 10px 16px; border:none; border-radius:10px; cursor:pointer; font-weight:600; background:var(--glass-border); color:var(--text-main);">本地</button>
-            <button onclick="saveNewTmpl('cloud')" style="padding: 10px 16px; border:none; border-radius:10px; cursor:pointer; font-weight:600; background:var(--primary); color:#fff;">云端</button>
-          </div>
-        </div>
+            <button class="btn-primary" id="generateBtn" onclick="generateLink()">🚀 生成订阅链接</button>
 
-        <div class="card text-shadow">
-          <div class="card-title">🛡️ 安全与面板控制</div>
-          <div class="row" style="flex-wrap: wrap;">
-            <div class="row-text"><strong>精确自动过期</strong><span>到期后订阅链接彻底销毁</span></div>
-            <div class="input-wrap">
-              <label class="switch"><input type="checkbox" id="enableExpire" onchange="document.getElementById('expireSettings').classList.toggle('hidden')"><span class="slider"></span></label>
+            <div id="resultArea" class="card hidden" style="border: 2px solid var(--success) !important; margin-bottom: 0; box-shadow: 0 8px 24px rgba(16, 185, 129, 0.15);">
+              <div style="color: var(--success); font-weight: 800; font-size: 16px; margin-bottom: 16px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <span>✅</span> 链接已生成成功
+              </div>
+              <input type="text" id="subUrl" style="text-align: center; font-weight: 600; color: var(--primary); font-size: 15px; padding: 16px; background: rgba(79, 70, 229, 0.05);" readonly>
+              <div style="display: flex; gap: 16px; margin-top: 20px; flex-wrap: wrap;">
+                <button onclick="window.open(document.getElementById('subUrl').value)" class="btn-sub" style="flex: 1; min-width: 140px; background: var(--input-bg); color: var(--text-main); border: 1px solid var(--input-border);">👀 浏览器预览</button>
+                <button onclick="copyUrl()" class="btn-sub" style="flex: 1; min-width: 140px; background: var(--primary); color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);">📋 一键复制</button>
+              </div>
             </div>
           </div>
-          <div id="expireSettings" class="hidden" style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--glass-border); display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap;">
-            <select id="expireType" onchange="toggleExpireInput()" style="width: auto;">
-              <option value="days">按天数</option><option value="hours">按小时</option><option value="date">指定日期和时间</option>
-            </select>
-            <input type="number" id="expireNum" placeholder="输入天数..." style="width: 120px;">
-            <input type="datetime-local" id="expireDate" class="hidden" style="width: 190px;">
-          </div>
-          
-          <div class="row">
-            <div class="row-text"><strong>独立 IP 防泄露</strong><span>允许拉取订阅的不同网络数量</span></div>
-            <div class="input-wrap">
-              <input type="number" id="maxDown" class="hidden" placeholder="IP数" style="width: 70px;">
-              <label class="switch"><input type="checkbox" onchange="document.getElementById('maxDown').classList.toggle('hidden')"><span class="slider"></span></label>
+
+          <div class="col-right">
+            <div class="card">
+              <div class="card-title">⚙️ 基础设置</div>
+              <div class="row">
+                <div class="row-text"><strong>配置显示名</strong><span>导入后显示的文件名</span></div>
+                <div class="input-wrap"><input type="text" id="filename" placeholder="如: 我的网络"></div>
+              </div>
+              <div class="row">
+                <div class="row-text"><strong>短链接后缀</strong><span>留空随机生成</span></div>
+                <div class="input-wrap"><input type="text" id="alias" placeholder="如: myvip"></div>
+              </div>
+              <div class="row">
+                <div class="row-text"><strong>通用订阅格式</strong><span>Base64 兼容全平台</span></div>
+                <label class="switch"><input type="checkbox" id="universal" onchange="toggleUniversal()"><span class="slider"></span></label>
+              </div>
+              <div id="universalWarning" class="alert-box hidden">
+                ⚠️ <b>注意：</b>开启后路由模板与分流规则将失效。
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">🛡️ 高级安全管理</div>
+              <div class="row">
+                <div class="row-text"><strong>精确自动过期</strong><span>到期后彻底销毁链接</span></div>
+                <label class="switch"><input type="checkbox" id="enableExpire" onchange="document.getElementById('expireSettings').classList.toggle('hidden')"><span class="slider"></span></label>
+              </div>
+              <div id="expireSettings" class="hidden" style="margin-top: 12px; padding-top: 16px; border-top: 1px dashed var(--input-border); display: flex; gap: 12px; flex-wrap: wrap;">
+                <select id="expireType" onchange="toggleExpireInput()" style="flex:1; min-width: 110px;">
+                  <option value="days">按天数</option><option value="hours">按小时</option><option value="date">指定日期</option>
+                </select>
+                <input type="number" id="expireNum" placeholder="数值..." style="flex:1; min-width: 110px;">
+                <input type="datetime-local" id="expireDate" class="hidden" style="width:100%;">
+              </div>
+              
+              <div class="row">
+                <div class="row-text"><strong>独立 IP 防泄露</strong><span>限制允许拉取的网络数</span></div>
+                <div class="input-wrap" style="max-width: 100px;"><input type="number" id="maxDown" placeholder="IP数"></div>
+              </div>
+              <div class="row">
+                <div class="row-text"><strong>阅后即焚模式</strong><span>拉取一次即刻自毁</span></div>
+                <label class="switch"><input type="checkbox" id="burnMode"><span class="slider"></span></label>
+              </div>
+              <div class="row">
+                <div class="row-text"><strong>伪装流量面板</strong><span>展示饼图及到期日期</span></div>
+                <label class="switch"><input type="checkbox" onchange="document.getElementById('trafficArea').classList.toggle('hidden')"><span class="slider"></span></label>
+              </div>
+              <div id="trafficArea" class="hidden traffic-grid">
+                <input type="text" id="tUp" placeholder="上传 (10G)">
+                <input type="text" id="tDown" placeholder="下载 (50G)">
+                <input type="text" id="tTotal" placeholder="总计 (200G)">
+                <input type="date" id="tExpireDate" style="grid-column: 1 / -1;">
+              </div>
             </div>
           </div>
-          <div class="row">
-            <div class="row-text"><strong>阅后即焚模式</strong><span>被客户端拉取一次后立即自毁</span></div>
-            <label class="switch"><input type="checkbox" id="burnMode"><span class="slider"></span></label>
-          </div>
-          <div class="row">
-            <div class="row-text"><strong>伪装流量数据面板</strong><span>在客户端展示饼图和到期时间</span></div>
-            <label class="switch"><input type="checkbox" onchange="document.getElementById('trafficArea').classList.toggle('hidden')"><span class="slider"></span></label>
-          </div>
-          <div id="trafficArea" class="hidden traffic-grid">
-            <input type="text" id="tUp" placeholder="已用上传 (如10G)">
-            <input type="text" id="tDown" placeholder="已用下载 (如50G)">
-            <input type="text" id="tTotal" placeholder="总计流量 (如200G)">
-            <input type="date" id="tExpireDate" style="grid-column: 1 / -1;">
-          </div>
-        </div>
 
-        <button class="btn-primary" id="generateBtn" onclick="generateLink()">🚀 生成订阅链接</button>
-
-        <div id="resultArea" class="card hidden text-shadow" style="border-color: var(--success) !important; margin-top: 20px; box-shadow: 0 0 0 1px var(--success);">
-          <div style="color: var(--success); font-weight: 700; margin-bottom: 12px; text-align: center;">🎉 链接已生成成功！</div>
-          <input type="text" id="subUrl" style="width: 100%; text-align: center; font-weight: 600; color: var(--primary); padding: 14px;" readonly>
-          <div style="display: flex; gap: 12px; margin-top: 15px;">
-            <button onclick="window.open(document.getElementById('subUrl').value)" style="flex: 1; padding: 12px; border-radius: 10px; border:1px solid var(--glass-border); background:var(--input-bg); color:var(--text-main); font-weight:600; cursor:pointer;">👀 在线预览</button>
-            <button onclick="copyUrl()" style="flex: 1; padding: 12px; border-radius: 10px; border:none; background: var(--primary); color: white; font-weight:600; cursor:pointer;">📋 一键复制</button>
-          </div>
         </div>
       </div>
 
@@ -509,13 +505,13 @@ export default {
         function handleFile(file) {
           if (!file) return;
           if (file.type.startsWith('image/') || file.type.startsWith('video/') || file.name.endsWith('.zip') || file.name.endsWith('.rar')) {
-            return alert('❌ 不支持的文件格式！仅支持文本配置 (如 .txt, .yaml等)。');
+            return alert('❌ 不支持的文件格式！仅支持纯文本。');
           }
           const reader = new FileReader();
           reader.onload = (e) => {
             uploadedFileText = e.target.result;
-            document.getElementById('fileStatus').innerHTML = \`✅ <b>已成功加载:</b> \${file.name} <br>大小: \${(file.size/1024).toFixed(2)} KB\`;
-            dropZone.style.background = 'rgba(16, 185, 129, 0.1)';
+            document.getElementById('fileStatus').innerHTML = \`✅ <b style="color:var(--success)">已成功加载:</b> \${file.name} <br>大小: \${(file.size/1024).toFixed(2)} KB\`;
+            dropZone.style.background = 'rgba(16, 185, 129, 0.05)';
             dropZone.style.borderColor = 'var(--success)';
           };
           reader.readAsText(file);
@@ -581,7 +577,7 @@ export default {
             document.getElementById('addTmplArea').classList.add('hidden');
             currentSelectedUrl = t.url; renderTmpls(); 
           };
-          document.getElementById('tmplGrid').appendChild(div); // FIX IS HERE
+          document.getElementById('tmplGrid').appendChild(div);
         }
 
         async function saveNewTmpl(mode) {
@@ -654,13 +650,14 @@ export default {
             const links = await getFinalInputText();
             if (!links) throw new Error('解析到的内容为空');
 
+            let maxDownVal = document.getElementById('maxDown').value;
             const payload = {
               links: links,
               filename: document.getElementById('filename').value.trim(),
               alias: document.getElementById('alias').value.trim(),
               universal: document.getElementById('universal').checked,
               tmplUrl: currentSelectedUrl,
-              maxDownloads: document.getElementById('maxDown').value ? parseInt(document.getElementById('maxDown').value) : null,
+              maxDownloads: maxDownVal ? parseInt(maxDownVal) : null,
               burn: document.getElementById('burnMode').checked,
             };
 
@@ -695,7 +692,7 @@ export default {
           } finally { btn.innerText = '🚀 生成订阅链接'; }
         }
 
-        async function copyUrl() { document.getElementById('subUrl').select(); try { await navigator.clipboard.writeText(document.getElementById('subUrl').value); alert('✅ 已复制！');} catch(e){} }
+        async function copyUrl() { document.getElementById('subUrl').select(); try { await navigator.clipboard.writeText(document.getElementById('subUrl').value); alert('✅ 链接已复制！');} catch(e){} }
         window.onload = fetchCloudTmpls;
       </script>
     </body>
