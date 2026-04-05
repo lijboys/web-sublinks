@@ -1,4 +1,5 @@
-// Version: 12.0.0 [2026-04-05]
+// Version: 12.5.0 [2026-04-05]
+// Feature: 智能名称继承 + 正则批量改名 + Toast无感通知 + 自动复制剪贴板。
 
 const CONFIG = { KV_TMPL_KEY: "__sys_cloud_templates__" };
 
@@ -7,7 +8,7 @@ export default {
     const url = new URL(request.url);
 
     // ====================================================
-    // API 路由
+    // API: 云端模板库管理
     // ====================================================
     if (url.pathname === '/api/tmpl') {
       if (!env.MY_KV) return new Response('[]', { status: 200 });
@@ -26,18 +27,30 @@ export default {
       }
     }
 
+    // ====================================================
+    // API: 代为拉取外部订阅链接 (附带提取原始订阅名)
+    // ====================================================
     if (url.pathname === '/api/fetch' && request.method === 'POST') {
       try {
         const body = await request.json();
         if (!body.subUrl) return new Response('No URL', { status: 400 });
         const res = await fetch(body.subUrl, { headers: { 'User-Agent': 'ClashMeta/1.14.0' } });
         if (!res.ok) throw new Error('拉取失败');
-        return new Response(await res.text(), { status: 200 });
+        
+        const text = await res.text();
+        let name = res.headers.get('profile-title') || '';
+        const disp = res.headers.get('content-disposition');
+        if (!name && disp) {
+          let m = disp.match(/filename\*?=UTF-8''([^'";\n]*)/i) || disp.match(/filename=["']?([^'";\n]+)["']?/i);
+          if (m) name = decodeURIComponent(m[1]).replace(/\.(txt|yaml|yml|json)$/i, '');
+        }
+        
+        return new Response(JSON.stringify({ text, name }), { status: 200, headers: {'Content-Type': 'application/json'} });
       } catch (e) { return new Response(e.message, { status: 500 }); }
     }
 
     // ====================================================
-    // 核心解析器
+    // 核心解析器：改名处理 -> 国旗识别 -> 格式解密
     // ====================================================
     const addFlag = (name) => {
       if (/🇭🇰|🇹🇼|🇯🇵|🇸🇬|🇰🇷|🇺🇸|🇬🇧|🇫🇷|🇩🇪|🇳🇱|🇷🇺/.test(name)) return name;
@@ -80,32 +93,51 @@ export default {
       return text;
     };
 
-    const parseLinksToArray = (linksStr) => {
+    const parseLinksToArray = (linksStr, replaceRule) => {
       let processedStr = tryDecodeBase64(linksStr);
       processedStr = extractProxies(processedStr);
       const links = processedStr.split('\n').map(l => l.trim()).filter(l => l);
       let proxies = [];
       let nameCount = {};
 
-      const getUniqueName = (baseName, type) => {
-        let name = baseName;
-        if (nameCount[name]) {
-          name = `${baseName}-${type}`;
-          if (nameCount[name]) {
-            nameCount[name]++;
-            name = `${name}${nameCount[name]}`;
-          } else nameCount[name] = 1;
-        } else nameCount[name] = 1;
-        return name;
+      const processName = (rawName) => {
+        let n = rawName;
+        // 1. 先进行正则/关键词替换
+        if (replaceRule && replaceRule.find) {
+          try { n = n.replace(new RegExp(replaceRule.find, 'gi'), replaceRule.replace || ''); } catch(e) {}
+        }
+        // 2. 然后添加国旗
+        n = addFlag(n);
+        // 3. 最后去重重命名
+        if (nameCount[n]) {
+          let typeCount = nameCount[n];
+          nameCount[n]++;
+          return `${n}-${typeCount}`;
+        } else {
+          nameCount[n] = 1;
+          return n;
+        }
       };
 
       for (let link of links) {
         try {
-          if (link.startsWith('- {') || link.startsWith('- name:')) { proxies.push(`  ${link}`); continue; }
+          if (link.startsWith('- {') || link.startsWith('- name:')) { 
+             // 如果原本就是 YAML 格式，尝试替换其中的 name 字段
+             let repLink = link;
+             if (replaceRule && replaceRule.find) {
+               try {
+                 repLink = repLink.replace(/(name:\s*['"]?)([^'",\}]+)(['"]?)/, (match, p1, p2, p3) => {
+                   let newName = p2.replace(new RegExp(replaceRule.find, 'gi'), replaceRule.replace || '');
+                   return p1 + addFlag(newName) + p3;
+                 });
+               } catch(e){}
+             }
+             proxies.push(`  ${repLink}`); 
+             continue; 
+          }
           if (link.startsWith('vless://')) {
             const u = new URL(link);
-            const rawName = addFlag(decodeURIComponent(u.hash.substring(1)));
-            const name = getUniqueName(rawName, 'vless');
+            const name = processName(decodeURIComponent(u.hash.substring(1)));
             let proxy = `  - {name: "${name}", server: "${u.hostname}", port: ${u.port}, type: vless, uuid: "${u.username}"`;
             if (u.searchParams.get('security') === 'reality') {
               proxy += `, tls: true, flow: "${u.searchParams.get('flow') || 'xtls-rprx-vision'}", skip-cert-verify: true, reality-opts: {public-key: "${u.searchParams.get('pbk')}"}`;
@@ -116,13 +148,13 @@ export default {
           } 
           else if (link.startsWith('hysteria2://')) {
             const u = new URL(link);
-            const name = getUniqueName(addFlag(decodeURIComponent(u.hash.substring(1))), 'hy2');
+            const name = processName(decodeURIComponent(u.hash.substring(1)));
             const sni = u.searchParams.get('sni') || u.hostname;
             proxies.push(`  - {name: "${name}", server: "${u.hostname}", port: ${u.port}, type: hysteria2, password: "${u.username}", sni: "${sni}", skip-cert-verify: true, alpn: [h3]}`);
           }
           else if (link.startsWith('tuic://')) {
             const u = new URL(link);
-            const name = getUniqueName(addFlag(decodeURIComponent(u.hash.substring(1))), 'tuic');
+            const name = processName(decodeURIComponent(u.hash.substring(1)));
             const auth = decodeURIComponent(u.username).split(':');
             const sni = u.searchParams.get('sni') || u.hostname;
             proxies.push(`  - {name: "${name}", server: "${u.hostname}", port: ${u.port}, type: tuic, uuid: "${auth[0]}", password: "${auth[1]}", sni: "${sni}", skip-cert-verify: true, alpn: [h3], congestion-controller: bbr, udp-relay-mode: native}`);
@@ -132,7 +164,7 @@ export default {
             const pad = b64.length % 4;
             const paddedB64 = pad ? b64 + '='.repeat(4 - pad) : b64;
             const json = JSON.parse(decodeURIComponent(escape(atob(paddedB64))));
-            const name = getUniqueName(addFlag(json.ps || "VMess"), 'vmess');
+            const name = processName(json.ps || "VMess");
             let proxy = `  - {name: "${name}", server: "${json.add}", port: ${json.port}, type: vmess, uuid: "${json.id}", alterId: ${json.aid}, cipher: auto`;
             if (json.tls === 'tls') proxy += `, tls: true, skip-cert-verify: true, servername: "${json.host}"`;
             if (json.net === 'ws') proxy += `, network: ws, ws-opts: {path: "${json.path}", headers: {Host: "${json.host}"}}`;
@@ -146,8 +178,8 @@ export default {
       return proxies.join('\n');
     };
 
-    const buildConfig = async (rawLinks, tmplUrl) => {
-      const proxiesStr = parseLinksToArray(rawLinks);
+    const buildConfig = async (rawLinks, tmplUrl, replaceRule) => {
+      const proxiesStr = parseLinksToArray(rawLinks, replaceRule);
       if (!tmplUrl) return "proxies:\n" + proxiesStr;
       let tmplText = "";
       try {
@@ -175,7 +207,7 @@ export default {
     }
 
     // ====================================================
-    // 下发路由 (兼容 免存长链 与 KV短链)
+    // 下发路由
     // ====================================================
     if (url.pathname.startsWith('/sub')) {
       let cfg = {};
@@ -183,15 +215,22 @@ export default {
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
       try {
-        // 1. 如果是免存长链 (包含 ?data=xxx)
+        // 免存长链模式
         if (url.searchParams.get('data')) {
            cfg.links = decodeURIComponent(escape(atob(url.searchParams.get('data'))));
            const tmplB64 = url.searchParams.get('tmpl');
            if (tmplB64) cfg.tmplUrl = atob(tmplB64);
            cfg.universal = url.searchParams.get('uni') === '1';
            cfg.filename = url.searchParams.get('name') || 'My_Config';
+           
+           if (url.searchParams.get('rf')) {
+             cfg.replaceRule = {
+               find: decodeURIComponent(escape(atob(url.searchParams.get('rf')))),
+               replace: url.searchParams.get('rt') ? decodeURIComponent(escape(atob(url.searchParams.get('rt')))) : ''
+             };
+           }
         } 
-        // 2. 如果是 KV 云端短链
+        // KV 云端短链模式
         else {
           if (!env.MY_KV) return new Response('KV ERROR', { status: 500 });
           if (!shortId) return new Response('Invalid ID', { status: 400 });
@@ -217,7 +256,6 @@ export default {
           }
         }
 
-        // 组装最终响应
         const filename = cfg.filename ? encodeURIComponent(cfg.filename) : 'My_Config';
         let headers = {
           'Content-Type': 'text/plain; charset=utf-8',
@@ -229,9 +267,15 @@ export default {
 
         let outText = "";
         if (cfg.universal) {
-          const processed = extractProxies(tryDecodeBase64(cfg.links));
-          outText = btoa(unescape(encodeURIComponent(processed)));
-        } else outText = await buildConfig(cfg.links, cfg.tmplUrl);
+          // 通用模式：先应用替换规则，再 Base64 (兼容原订阅直接转出)
+          let rawData = extractProxies(tryDecodeBase64(cfg.links));
+          if (cfg.replaceRule && cfg.replaceRule.find) {
+            try { rawData = rawData.replace(new RegExp(cfg.replaceRule.find, 'gi'), cfg.replaceRule.replace || ''); } catch(e){}
+          }
+          outText = btoa(unescape(encodeURIComponent(rawData)));
+        } else {
+          outText = await buildConfig(cfg.links, cfg.tmplUrl, cfg.replaceRule);
+        }
 
         return new Response(outText, { headers });
       } catch (e) { return new Response('Error: ' + e.message, { status: 500 }); }
@@ -241,7 +285,7 @@ export default {
     const workerDomain = `${url.protocol}//${url.host}/sub`;
 
     // ====================================================
-    // 前端 Web UI
+    // 前端 Web UI (加入 Toast + 自动继承名称 + 批量改名框)
     // ====================================================
     const html = `
     <!DOCTYPE html>
@@ -287,6 +331,7 @@ export default {
         .header h1 { font-size: 32px; font-weight: 800; margin: 0 0 10px 0; letter-spacing: -0.5px; background: linear-gradient(135deg, var(--primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
         .header p { color: var(--text-muted); font-size: 15px; margin: 0; font-weight: 500; text-shadow: 0 1px 2px rgba(0,0,0,0.1);}
 
+        /* 极致平衡双栏栅格 */
         .grid-layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; align-items: start; }
         .col-left { display: flex; flex-direction: column; gap: 24px; position: sticky; top: 32px; transform: translateZ(0); }
         .col-right { display: flex; flex-direction: column; gap: 24px; transform: translateZ(0); }
@@ -350,11 +395,19 @@ export default {
         .hidden { display: none !important; }
         
         .traffic-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--input-border);}
+
+        /* 优雅的 Toast 通知系统 */
+        .toast-container { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10000; display: flex; flex-direction: column; gap: 12px; pointer-events: none; }
+        .toast { background: var(--glass-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border); padding: 14px 24px; border-radius: 14px; box-shadow: var(--shadow-card), var(--inner-highlight); color: var(--text-main); font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 10px; animation: toastIn 0.4s cubic-bezier(0.16, 1, 0.3, 1), toastOut 0.4s cubic-bezier(0.16, 1, 0.3, 1) 2.6s forwards; }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(20px) scale(0.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes toastOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.9); } }
       </style>
     </head>
     <body>
 
       <button class="theme-toggle" onclick="toggleTheme()" title="切换日夜模式"><span id="themeIcon">🌙</span></button>
+
+      <div class="toast-container" id="toastContainer"></div>
 
       <div class="container">
         <div class="header">
@@ -410,12 +463,12 @@ export default {
 
             <div id="resultArea" class="card hidden" style="border: 2px solid var(--success) !important; margin-bottom: 0; box-shadow: 0 8px 24px rgba(16, 185, 129, 0.15);">
               <div style="color: var(--success); font-weight: 800; font-size: 16px; margin-bottom: 16px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                <span>✅</span> 链接已生成成功
+                <span>✅</span> 链接已生成并复制到剪贴板！
               </div>
               <input type="text" id="subUrl" style="text-align: center; font-weight: 600; color: var(--primary); font-size: 15px; padding: 16px; background: rgba(79, 70, 229, 0.05);" readonly>
               <div style="display: flex; gap: 16px; margin-top: 20px; flex-wrap: wrap;">
                 <button onclick="window.open(document.getElementById('subUrl').value)" class="btn-sub" style="flex: 1; min-width: 140px; background: var(--input-bg); color: var(--text-main); border: 1px solid var(--input-border);">👀 浏览器预览</button>
-                <button onclick="copyUrl()" class="btn-sub" style="flex: 1; min-width: 140px; background: var(--primary); color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);">📋 一键复制</button>
+                <button onclick="copyUrl(false)" class="btn-sub" style="flex: 1; min-width: 140px; background: var(--primary); color: white; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);">📋 手动复制</button>
               </div>
             </div>
           </div>
@@ -424,13 +477,28 @@ export default {
             <div class="card">
               <div class="card-title">⚙️ 基础设置</div>
               <div class="row">
-                <div class="row-text"><strong>配置显示名</strong><span>导入后显示的文件名</span></div>
+                <div class="row-text">
+                  <strong>配置显示名</strong>
+                  <span style="line-height:1.4; display:inline-block; margin-top:2px;">留空则自动提取原订阅名</span>
+                </div>
                 <div class="input-wrap"><input type="text" id="filename" placeholder="如: 我的网络"></div>
               </div>
               <div class="row">
                 <div class="row-text"><strong>短链接后缀</strong><span>留空随机生成</span></div>
                 <div class="input-wrap"><input type="text" id="alias" placeholder="如: myvip"></div>
               </div>
+              
+              <div class="row">
+                <div class="row-text">
+                  <strong>节点批量改名</strong>
+                  <span style="line-height:1.4; display:inline-block; margin-top:2px;">支持正则，剔除广告前缀</span>
+                </div>
+                <div class="input-wrap" style="flex-wrap: nowrap; gap: 8px;">
+                  <input type="text" id="repFind" placeholder="查找 (如: 官网.*)" style="width: 50%;">
+                  <input type="text" id="repTo" placeholder="替换为 (如: 专线)" style="width: 50%;">
+                </div>
+              </div>
+
               <div class="row">
                 <div class="row-text"><strong>通用订阅格式</strong><span>Base64 兼容全平台</span></div>
                 <label class="switch"><input type="checkbox" id="universal" onchange="toggleUniversal()"><span class="slider"></span></label>
@@ -463,7 +531,7 @@ export default {
                 <label class="switch"><input type="checkbox" id="burnMode"><span class="slider"></span></label>
               </div>
               <div class="row">
-                <div class="row-text"><strong>伪装流量数据</strong><span>展示饼图及到期日期</span></div>
+                <div class="row-text"><strong>伪装流量面板</strong><span>展示饼图及到期日期</span></div>
                 <label class="switch"><input type="checkbox" onchange="document.getElementById('trafficArea').classList.toggle('hidden')"><span class="slider"></span></label>
               </div>
               <div id="trafficArea" class="hidden traffic-grid">
@@ -479,6 +547,16 @@ export default {
       </div>
 
       <script>
+        // --- 优雅的 Toast 通知 ---
+        function showToast(msg, icon = '🔔') {
+          const container = document.getElementById('toastContainer');
+          const toast = document.createElement('div');
+          toast.className = 'toast';
+          toast.innerHTML = \`<span>\${icon}</span> \${msg}\`;
+          container.appendChild(toast);
+          setTimeout(() => { if(toast.parentNode) toast.parentNode.removeChild(toast); }, 3000);
+        }
+
         function initTheme() {
           const savedTheme = localStorage.getItem('__pro_theme');
           const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -520,7 +598,7 @@ export default {
         function handleFile(file) {
           if (!file) return;
           if (file.type.startsWith('image/') || file.type.startsWith('video/') || file.name.endsWith('.zip') || file.name.endsWith('.rar')) {
-            return alert('❌ 不支持的文件格式！仅支持纯文本。');
+            return showToast('不支持的文件格式！仅支持纯文本。', '❌');
           }
           const reader = new FileReader();
           reader.onload = (e) => {
@@ -609,9 +687,9 @@ export default {
             const newTmpls = [...cloudTemplates, { name: '☁️ ' + name, url: url }];
             try {
               const res = await fetch('/api/tmpl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pwd, tmpls: newTmpls }) });
-              if (res.status === 403) { localStorage.removeItem('__admin_pwd'); return alert('密码错误'); }
+              if (res.status === 403) { localStorage.removeItem('__admin_pwd'); return showToast('密码错误', '❌'); }
               localStorage.setItem('__admin_pwd', pwd); cloudTemplates = newTmpls; finishSave(url);
-            } catch(e) { alert('保存失败'); }
+            } catch(e) { showToast('保存失败', '❌'); }
           }
         }
         function finishSave(url) { currentSelectedUrl = url; document.getElementById('newTmplName').value = ''; document.getElementById('newTmplUrl').value = ''; document.getElementById('addTmplArea').classList.add('hidden'); renderTmpls(); }
@@ -644,18 +722,28 @@ export default {
         }
 
         async function getFinalInputText() {
+          let text = '', defaultName = '';
           if (currentTab === 'paste') {
-             return document.getElementById('inputLinks').value.trim();
+             text = document.getElementById('inputLinks').value.trim();
           } else if (currentTab === 'file') {
              if (!uploadedFileText) throw new Error('请先上传文件');
-             return uploadedFileText.trim();
+             text = uploadedFileText.trim();
           } else if (currentTab === 'url') {
              const subUrl = document.getElementById('inputUrl').value.trim();
              if (!subUrl) throw new Error('请填写订阅链接');
              const res = await fetch('/api/fetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subUrl }) });
              if (!res.ok) throw new Error('云端代拉取订阅失败');
-             return await res.text();
+             const data = await res.json();
+             text = data.text; defaultName = data.name;
           }
+          
+          // 如果还没有提取到名字，尝试从文本中解析 (例如 #NAME: xxx)
+          if (!defaultName && text) {
+             const m = text.match(/^[#;!/]+\s*(?:NAME|profile-title|title|name):\s*(.+)$/im);
+             if (m) defaultName = m[1].trim();
+          }
+
+          return { text, defaultName };
         }
 
         // --- 生成云端短链 ---
@@ -664,19 +752,30 @@ export default {
           const oldText = btn.innerText;
           btn.innerText = '⏳ 处理中...';
           try {
-            const links = await getFinalInputText();
+            const { text: links, defaultName } = await getFinalInputText();
             if (!links) throw new Error('解析到的内容为空');
+
+            // 智能继承名称
+            let userFilename = document.getElementById('filename').value.trim();
+            const finalFilename = userFilename || defaultName || '';
 
             let maxDownVal = document.getElementById('maxDown').value;
             const payload = {
               links: links,
-              filename: document.getElementById('filename').value.trim(),
+              filename: finalFilename,
               alias: document.getElementById('alias').value.trim(),
               universal: document.getElementById('universal').checked,
               tmplUrl: currentSelectedUrl,
               maxDownloads: maxDownVal ? parseInt(maxDownVal) : null,
               burn: document.getElementById('burnMode').checked,
             };
+
+            // 加入正则替换规则
+            const repFind = document.getElementById('repFind').value.trim();
+            const repTo = document.getElementById('repTo').value;
+            if (repFind) {
+              payload.replaceRule = { find: repFind, replace: repTo };
+            }
 
             if (document.getElementById('enableExpire').checked) {
                const type = document.getElementById('expireType').value;
@@ -704,18 +803,22 @@ export default {
             
             document.getElementById('subUrl').value = domain + '/' + await res.text();
             document.getElementById('resultArea').classList.remove('hidden');
+            
+            // 成功后自动复制
+            copyUrl(true);
+            showToast('🎉 短链接生成成功并已自动复制！', '✅');
           } catch(e) {
-            alert('❌ 失败: ' + e.message);
+            showToast(e.message, '❌');
           } finally { btn.innerText = oldText; }
         }
 
         // --- 生成免存长链 ---
         async function generateLong() {
           const btn = document.getElementById('generateLongBtn');
-          const originalText = btn.innerText;
+          const oldText = btn.innerText;
           btn.innerText = '⏳ 打包中...';
           try {
-            const links = await getFinalInputText();
+            const { text: links, defaultName } = await getFinalInputText();
             if (!links) throw new Error('解析到的内容为空');
 
             const encodedData = btoa(unescape(encodeURIComponent(links)));
@@ -727,19 +830,37 @@ export default {
                finalUrl += '&tmpl=' + btoa(currentSelectedUrl);
             }
             
-            const filename = document.getElementById('filename').value.trim();
-            if (filename) finalUrl += '&name=' + encodeURIComponent(filename);
+            let userFilename = document.getElementById('filename').value.trim();
+            const finalFilename = userFilename || defaultName || '';
+            if (finalFilename) finalUrl += '&name=' + encodeURIComponent(finalFilename);
+
+            // 加入正则替换规则到 URL
+            const repFind = document.getElementById('repFind').value.trim();
+            const repTo = document.getElementById('repTo').value;
+            if (repFind) {
+              finalUrl += '&rf=' + btoa(unescape(encodeURIComponent(repFind)));
+              finalUrl += '&rt=' + btoa(unescape(encodeURIComponent(repTo)));
+            }
 
             document.getElementById('subUrl').value = finalUrl;
             document.getElementById('resultArea').classList.remove('hidden');
             
-            alert('💡 提示：您生成了免存长链。因为数据并未存入云端，右侧面板中的「安全控制」和「流量面板」功能对长链无效。但配置改名与路由模板依然生效！');
+            copyUrl(true);
+            showToast('🎈 免存长链生成并自动复制！', '✅');
           } catch(e) {
-            alert('❌ 失败: ' + e.message);
-          } finally { btn.innerText = originalText; }
+            showToast(e.message, '❌');
+          } finally { btn.innerText = oldText; }
         }
 
-        async function copyUrl() { document.getElementById('subUrl').select(); try { await navigator.clipboard.writeText(document.getElementById('subUrl').value); alert('✅ 链接已复制！');} catch(e){} }
+        async function copyUrl(isAuto = false) { 
+          document.getElementById('subUrl').select(); 
+          try { 
+            await navigator.clipboard.writeText(document.getElementById('subUrl').value); 
+            if (!isAuto) showToast('链接已复制到剪贴板！', '✅');
+          } catch(e){
+            if (!isAuto) showToast('复制失败，请手动复制', '❌');
+          } 
+        }
         window.onload = fetchCloudTmpls;
       </script>
     </body>
