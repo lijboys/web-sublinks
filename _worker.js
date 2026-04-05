@@ -1,5 +1,4 @@
 // Version: 12.0.0 [2026-04-05]
-// Feature: 紧急寻回“免存长链(Base64)”功能，并将其完美融入新版 UI 与解析引擎。
 
 const CONFIG = { KV_TMPL_KEY: "__sys_cloud_templates__" };
 
