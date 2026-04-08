@@ -462,31 +462,32 @@ export default {
      * 模块3：API
      * ========================= */
 
-    if (url.pathname === "/api/list_subs" && request.method === "POST") {
-      try {
-        const body = await request.json();
-        if (body.pwd !== env.ADMIN_PWD) return textRes("密码错误", 403);
+if (url.pathname === "/api/list_subs" && request.method === "POST") {
+  try {
+    const body = await request.json();
+    if (body.pwd !== env.ADMIN_PWD) return textRes("密码错误", 403);
 
-        const list = await env.MY_KV.list();
-        const subs = [];
-        for (const key of list.keys) {
-          if (key.name === CONFIG.KV_TMPL_KEY) continue;
-          const meta = key.metadata || {};
-          subs.push({
-            id: key.name,
-            name: meta.name || "未命名",
-            createdAt: meta.createdAt || 0,
-            accessed: meta.accessed || 0,
-            max: meta.max || "无",
-            burn: meta.burn || false
-          });
-        }
-        subs.sort((a, b) => b.createdAt - a.createdAt);
-        return jsonRes(subs);
-      } catch {
-        return textRes("Error", 500);
-      }
+    const list = await env.MY_KV.list();
+    const subs = [];
+    for (const key of list.keys) {
+      if (key.name === CONFIG.KV_TMPL_KEY) continue;
+      const meta = key.metadata || {};
+      subs.push({
+        id: key.name,
+        name: meta.name || "未命名",
+        remark: meta.remark || "",
+        createdAt: meta.createdAt || 0,
+        accessed: meta.accessed || 0,
+        max: meta.max || "无",
+        burn: meta.burn || false
+      });
     }
+    subs.sort((a, b) => b.createdAt - a.createdAt);
+    return jsonRes(subs);
+  } catch {
+    return textRes("Error", 500);
+  }
+}
 
     if (url.pathname === "/api/del_sub" && request.method === "POST") {
       try {
@@ -557,29 +558,31 @@ export default {
     }
 
     if (url.pathname === "/api/shorten" && request.method === "POST") {
-      try {
-        const payload = await request.json();
-        if (!payload.links) return textRes("Empty", 400);
+  try {
+    const payload = await request.json();
+    if (!payload.links) return textRes("Empty", 400);
 
-        const shortId = payload.alias ? encodeURIComponent(payload.alias) : Math.random().toString(36).substring(2, 8);
-        payload.createdAt = Date.now();
-        payload.accessedIPs = [];
+    const shortId = payload.alias ? encodeURIComponent(payload.alias) : Math.random().toString(36).substring(2, 8);
+    payload.createdAt = Date.now();
+    payload.accessedIPs = [];
+    payload.remark = (payload.remark || "").trim();
 
-        await env.MY_KV.put(shortId, JSON.stringify(payload), {
-          metadata: {
-            name: payload.filename || "未命名",
-            createdAt: payload.createdAt,
-            max: payload.maxDownloads || "无",
-            burn: payload.burn || false,
-            accessed: 0
-          }
-        });
-
-        return textRes(shortId);
-      } catch {
-        return textRes("Format Error", 400);
+    await env.MY_KV.put(shortId, JSON.stringify(payload), {
+      metadata: {
+        name: payload.filename || "未命名",
+        remark: payload.remark || "",
+        createdAt: payload.createdAt,
+        max: payload.maxDownloads || "无",
+        burn: payload.burn || false,
+        accessed: 0
       }
-    }
+    });
+
+    return textRes(shortId);
+  } catch {
+    return textRes("Format Error", 400);
+  }
+}
 
     /* =========================
      * 模块4：订阅输出
@@ -689,39 +692,235 @@ export default {
     }
 
     /* =========================
-     * 模块5：后台页面
+     * 模块5：后台页面（防炸版 + 预览功能）
      * ========================= */
 
     if (url.pathname === "/panel") {
-      const html = `<!DOCTYPE html><html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>👑 控制台后台管理</title><style>
-:root{--primary:#4f46e5;--accent:#0ea5e9;--danger:#ef4444;--success:#10b981;--warning:#f59e0b;--bg:#f1f5f9;--text:#0f172a;--muted:#64748b;--glass:rgba(255,255,255,.84);--border:rgba(15,23,42,.08);--input:rgba(255,255,255,.62);--shadow:0 10px 30px -10px rgba(0,0,0,.08)}
-[data-theme="dark"]{--bg:#0f172a;--text:#f8fafc;--muted:#94a3b8;--glass:rgba(15,23,42,.75);--border:rgba(255,255,255,.1);--input:rgba(0,0,0,.24);--shadow:0 15px 35px -5px rgba(0,0,0,.4)}
-*{box-sizing:border-box}body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:28px 16px;transition:.3s}.container{max-width:1220px;margin:0 auto}.card{background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:22px;padding:24px;box-shadow:var(--shadow)}.header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}.header h1{margin:0;font-size:28px;background:linear-gradient(135deg,var(--primary),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent}.top-actions{display:flex;gap:10px;flex-wrap:wrap}.btn,.btn-danger,.btn-success,.btn-warning,.btn-primary{border:none;padding:11px 16px;border-radius:12px;cursor:pointer;font-weight:800;font-size:14px}.btn,.theme-toggle{background:var(--input);color:var(--text);border:1px solid var(--border)}.btn-primary{background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff}.btn-danger{background:rgba(239,68,68,.12);color:var(--danger);border:1px solid rgba(239,68,68,.28)}.btn-success{background:rgba(16,185,129,.12);color:var(--success);border:1px solid rgba(16,185,129,.28)}.btn-warning{background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.28)}.theme-toggle{padding:11px 16px;border-radius:12px;cursor:pointer;font-weight:800}
-.login-box{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;padding:16px;border:1px dashed var(--border);border-radius:16px;background:rgba(127,127,127,.05)}.login-box input,.search-row input{padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--input);color:var(--text);font-size:14px}
-.search-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}.search-row input{flex:1;min-width:220px}.list{display:flex;flex-direction:column;gap:14px}.item{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:18px;display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}.info{flex:1;min-width:290px}.info strong{display:block;font-size:16px;margin-bottom:10px;word-break:break-all}.tags{display:flex;gap:8px;flex-wrap:wrap}.tag{font-size:12px;color:var(--muted);background:rgba(127,127,127,.12);padding:5px 10px;border-radius:999px}.tag.red{color:var(--danger);background:rgba(239,68,68,.12)}.ops{display:flex;gap:10px;flex-wrap:wrap}.empty{text-align:center;padding:50px 20px;color:var(--muted);font-weight:700}.toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);background:var(--glass);backdrop-filter:blur(16px);padding:14px 20px;border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow);font-weight:800;z-index:9999}.check{transform:scale(1.2);margin-right:10px}.hidden{display:none!important}
-</style></head><body><div class="container"><div class="card"><div class="header"><h1>👑 订阅管理中心</h1><div class="top-actions"><button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">🌙 切换主题</button><button class="btn" onclick="location.href='/'">↩ 前台首页</button></div></div><div class="login-box" id="loginBox"><input type="password" id="pwdInput" placeholder="输入管理员密码" style="flex:1;min-width:220px;"><button class="btn-primary" onclick="savePwdAndLoad()">🔐 登录后台</button><button class="btn-danger" onclick="logoutAdmin()">🚪 退出登录</button></div><div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"><button class="btn-success" onclick="refreshAll()">🔄 刷新数据</button><button class="btn-danger" onclick="deleteSelected()">🗑️ 删除选中</button><button class="btn" onclick="selectAll(true)">☑️ 全选</button><button class="btn" onclick="selectAll(false)">⬜ 取消全选</button></div><div class="search-row"><input id="searchInput" placeholder="搜索短链ID / 配置名..." oninput="renderList()"></div><div id="adminList" class="list"><div class="empty">请先登录后台</div></div></div></div>
+      const html = `<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>👑 控制台后台管理</title>
+  <style>
+    :root{--primary:#4f46e5;--accent:#0ea5e9;--danger:#ef4444;--success:#10b981;--warning:#f59e0b;--bg:#f1f5f9;--text:#0f172a;--muted:#64748b;--glass:rgba(255,255,255,.84);--border:rgba(15,23,42,.08);--input:rgba(255,255,255,.62);--shadow:0 10px 30px -10px rgba(0,0,0,.08)}
+    [data-theme="dark"]{--bg:#0f172a;--text:#f8fafc;--muted:#94a3b8;--glass:rgba(15,23,42,.75);--border:rgba(255,255,255,.1);--input:rgba(0,0,0,.24);--shadow:0 15px 35px -5px rgba(0,0,0,.4)}
+    *{box-sizing:border-box}
+    body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:28px 16px;transition:.3s}
+    .container{max-width:1220px;margin:0 auto}
+    .card{background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--border);border-radius:22px;padding:24px;box-shadow:var(--shadow)}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+    .header h1{margin:0;font-size:28px;background:linear-gradient(135deg,var(--primary),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .top-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{border:none;padding:11px 16px;border-radius:12px;cursor:pointer;font-weight:800;font-size:14px;background:var(--input);color:var(--text);border:1px solid var(--border)}
+    .btn-primary{background:linear-gradient(135deg,var(--primary),var(--accent));color:#fff;border:none}
+    .btn-danger{background:rgba(239,68,68,.12);color:var(--danger);border:1px solid rgba(239,68,68,.28)}
+    .btn-success{background:rgba(16,185,129,.12);color:var(--success);border:1px solid rgba(16,185,129,.28)}
+    .preview-btn{background:var(--success);color:#fff;border:1px solid rgba(16,185,129,.28)}
+    .login-box{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;padding:16px;border:1px dashed var(--border);border-radius:16px;background:rgba(127,127,127,.05)}
+    .list{display:flex;flex-direction:column;gap:14px}
+    .item{background:var(--input);border:1px solid var(--border);border-radius:16px;padding:18px;display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+    .info{flex:1;min-width:290px}
+    .info strong{display:block;font-size:16px;margin-bottom:10px;word-break:break-all}
+    .tags{display:flex;gap:8px;flex-wrap:wrap}
+    .tag{font-size:12px;color:var(--muted);background:rgba(127,127,127,.12);padding:5px 10px;border-radius:999px}
+    .tag.red{color:var(--danger);background:rgba(239,68,68,.12)}
+    .ops{display:flex;gap:8px;flex-wrap:wrap}
+    .toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);background:var(--glass);backdrop-filter:blur(16px);padding:14px 20px;border-radius:14px;border:1px solid var(--border);box-shadow:var(--shadow);font-weight:800;z-index:9999}
+    input[type=password],input[type=text]{width:100%;padding:12px 16px;border-radius:12px;border:1px solid var(--border);background:var(--input);color:var(--text);font-size:14px}
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="header">
+      <h1>👑 订阅管理中心（CF 完整版）</h1>
+      <div class="top-actions">
+        <button class="btn" onclick="toggleTheme()" id="themeBtn">🌙 切换主题</button>
+        <button class="btn" onclick="location.href='/'">↩ 前台首页</button>
+      </div>
+    </div>
+
+    <div class="login-box" id="loginBox">
+      <input type="password" id="pwdInput" placeholder="输入管理员密码" style="flex:1;min-width:220px;">
+      <button class="btn btn-primary" onclick="loginAndLoad()">🔐 登录后台</button>
+      <button class="btn btn-danger" onclick="logout()">🚪 退出</button>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-success" onclick="refreshList()">🔄 刷新</button>
+      <button class="btn btn-danger" onclick="batchDelete()">🗑️ 批量删除选中</button>
+      <button class="btn" onclick="selectAll(true)">全选</button>
+      <button class="btn" onclick="selectAll(false)">取消全选</button>
+    </div>
+
+    <input id="searchInput" placeholder="搜索短链ID / 配置名..." style="width:100%;padding:12px 16px;border-radius:12px;border:1px solid var(--border);background:var(--input);margin-bottom:16px;" oninput="renderList()">
+
+    <div id="listContainer" class="list"></div>
+  </div>
+</div>
+
 <script>
-let allSubs=[];
-function showToast(msg){const t=document.createElement('div');t.className='toast';t.innerText=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3000)}
-function initTheme(){const saved=localStorage.getItem('__pro_theme');const dark=saved==='dark'||(!saved&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',dark?'dark':'light');document.getElementById('themeBtn').innerText=dark?'🌞 切换主题':'🌙 切换主题'}
-function toggleTheme(){const next=document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',next);localStorage.setItem('__pro_theme',next);document.getElementById('themeBtn').innerText=next==='dark'?'🌞 切换主题':'🌙 切换主题'}
-initTheme();
-function getPwd(){return (localStorage.getItem('__admin_pwd')||'').trim()}
-function savePwdAndLoad(){const pwd=document.getElementById('pwdInput').value.trim();if(!pwd)return showToast('请输入管理员密码');localStorage.setItem('__admin_pwd',pwd);refreshAll()}
-function logoutAdmin(){localStorage.removeItem('__admin_pwd');document.getElementById('pwdInput').value='';document.getElementById('adminList').innerHTML='<div class="empty">已退出，请重新登录</div>';showToast('已退出登录')}
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-function selectedIds(){return Array.from(document.querySelectorAll('.sub-check:checked')).map(x=>x.value)}
-function selectAll(flag){document.querySelectorAll('.sub-check').forEach(x=>x.checked=!!flag)}
-async function apiPost(api,data){const pwd=getPwd();if(!pwd) throw new Error('请先登录');const res=await fetch('/api/'+api,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,pwd})});if(res.status===403){localStorage.removeItem('__admin_pwd');throw new Error('密码错误')}return res}
-async function loadList(){const res=await apiPost('list_subs',{});allSubs=await res.json();renderList()}
-function renderList(){const kw=document.getElementById('searchInput').value.trim().toLowerCase();const arr=allSubs.filter(s=>!kw||String(s.id).toLowerCase().includes(kw)||String(s.name).toLowerCase().includes(kw));const box=document.getElementById('adminList');if(!arr.length){box.innerHTML='<div class="empty">暂无符合条件的数据</div>';return}box.innerHTML=arr.map(s=>'<div class="item"><div class="info"><strong><input class="sub-check check" type="checkbox" value="'+esc(s.id)+'">🔗 /sub/'+esc(s.id)+'</strong><div class="tags"><span class="tag">🏷️ 配置：'+esc(s.name||'未命名')+'</span><span class="tag">👀 独立IP：'+esc(String(s.accessed))+' / '+esc(String(s.max))+'</span>'+(s.burn?'<span class="tag red">🔥 阅后即焚</span>':'')+'</div></div><div class="ops"><button class="btn" onclick="copySub(\\''+String(s.id).replace(/'/g,"\\\\'")+'\\')">📋 复制链接</button><button class="btn-danger" onclick="deleteSub(\\''+String(s.id).replace(/'/g,"\\\\'")+'\\')">永久销毁</button></div></div>').join('')}
-async function copySub(id){try{await navigator.clipboard.writeText(location.origin+'/sub/'+id);showToast('链接已复制')}catch(e){showToast('复制失败')}}
-async function deleteSub(id){if(!confirm('确定永久删除该订阅？'))return;try{const res=await apiPost('del_sub',{id});if(res.ok){showToast('删除成功');refreshAll()}else showToast('删除失败')}catch(e){showToast(e.message||'删除失败')}}
-async function deleteSelected(){const ids=selectedIds();if(!ids.length)return showToast('请先选择项目');if(!confirm('确定删除选中的 '+ids.length+' 项？'))return;try{const res=await apiPost('del_batch',{ids});const data=await res.json();showToast('已删除 '+(data.deleted||0)+' 项');refreshAll()}catch(e){showToast(e.message||'删除失败')}}
-async function refreshAll(){try{await loadList()}catch(e){showToast(e.message||'加载失败')}}
-window.onload=()=>{const pwd=getPwd();if(pwd){document.getElementById('pwdInput').value=pwd;refreshAll()}}
-</script></body></html>`;
-      return textRes(html, 200, { "Content-Type": "text/html;charset=UTF-8" });
+let allSubs = [];
+let pwdCache = '';
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 2800);
+}
+
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  document.getElementById('themeBtn').textContent = isDark ? '🌙 切换主题' : '🌞 切换主题';
+}
+
+async function loginAndLoad() {
+  const inputPwd = document.getElementById('pwdInput').value.trim();
+  if (!inputPwd) return showToast('请输入密码');
+  pwdCache = inputPwd;
+  localStorage.setItem('__cf_admin_pwd', inputPwd);
+  await loadList();
+}
+
+function logout() {
+  pwdCache = '';
+  localStorage.removeItem('__cf_admin_pwd');
+  document.getElementById('listContainer').innerHTML = '<div style="text-align:center;padding:60px;color:var(--muted)">已退出，请重新登录</div>';
+  showToast('已退出');
+}
+
+async function apiCall(endpoint, body) {
+  if (!body) body = {};
+  if (!pwdCache) pwdCache = localStorage.getItem('__cf_admin_pwd') || '';
+  const res = await fetch('/api/' + endpoint, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(Object.assign({}, body, { pwd: pwdCache }))
+  });
+  if (res.status === 403) {
+    logout();
+    throw new Error('密码错误');
+  }
+  if (!res.ok) throw new Error('请求失败');
+  return res;
+}
+
+async function loadList() {
+  try {
+    const res = await apiCall('list_subs');
+    allSubs = await res.json();
+    renderList();
+  } catch (e) {
+    showToast(e.message || '加载失败');
+  }
+}
+
+async function refreshList() {
+  await loadList();
+  showToast('列表已刷新');
+}
+
+function renderList() {
+  const kw = document.getElementById('searchInput').value.toLowerCase().trim();
+  const filtered = allSubs.filter(function(s){
+    return !kw || s.id.toLowerCase().includes(kw) || (s.name || '').toLowerCase().includes(kw);
+  });
+
+  const container = document.getElementById('listContainer');
+  if (!filtered.length) {
+    container.innerHTML = '<div style="text-align:center;padding:80px 20px;color:var(--muted);font-size:15px">暂无订阅</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(function(sub){
+    return '<div class="item">' +
+      '<div class="info">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+          '<input type="checkbox" class="sub-check" value="' + sub.id + '" style="transform:scale(1.3)">' +
+          '<strong>/sub/' + sub.id + '</strong>' +
+        '</label>' +
+        '<div class="tags">' +
+          '<span class="tag">📛 ' + (sub.name || '未命名') + '</span>' +
+          (sub.remark ? '<span class="tag">📝 ' + sub.remark + '</span>' : '') +
+          '<span class="tag">👀 已访问 ' + (sub.accessed || 0) + ' 次</span>' +
+          (sub.max !== '无' ? '<span class="tag">限 ' + sub.max + ' IP</span>' : '') +
+          (sub.burn ? '<span class="tag red">🔥 阅后即焚</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="ops">' +
+        '<button class="btn preview-btn" onclick="previewSub(\\'' + sub.id + '\\')">👀 预览订阅</button>' +
+        '<button class="btn" onclick="copyLink(\\'' + sub.id + '\\')">📋 复制链接</button>' +
+        '<button class="btn btn-danger" onclick="deleteSingle(\\'' + sub.id + '\\')">永久删除</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function selectAll(checked) {
+  document.querySelectorAll('.sub-check').forEach(function(cb){
+    cb.checked = checked;
+  });
+}
+
+async function copyLink(id) {
+  try {
+    await navigator.clipboard.writeText(location.origin + '/sub/' + id);
+    showToast('链接已复制');
+  } catch(e) {
+    showToast('复制失败');
+  }
+}
+
+async function previewSub(id) {
+  window.open(location.origin + '/sub/' + id, '_blank');
+  showToast('已打开预览');
+}
+
+async function deleteSingle(id) {
+  if (!confirm('确定永久删除这条订阅吗？')) return;
+  try {
+    await apiCall('del_sub', { id: id });
+    showToast('已删除');
+    await loadList();
+  } catch (e) {
+    showToast(e.message || '删除失败');
+  }
+}
+
+async function batchDelete() {
+  const ids = Array.from(document.querySelectorAll('.sub-check:checked')).map(function(cb){
+    return cb.value;
+  });
+  if (!ids.length) return showToast('请先勾选要删除的项目');
+  if (!confirm('确定删除选中的 ' + ids.length + ' 条订阅？')) return;
+  try {
+    await apiCall('del_batch', { ids: ids });
+    showToast('批量删除完成');
+    await loadList();
+  } catch (e) {
+    showToast(e.message || '批量删除失败');
+  }
+}
+
+window.onload = function() {
+  const savedPwd = localStorage.getItem('__cf_admin_pwd');
+  if (savedPwd) {
+    pwdCache = savedPwd;
+    document.getElementById('pwdInput').value = savedPwd;
+    loadList();
+  }
+};
+</script>
+</body></html>`;
+
+      return new Response(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html;charset=UTF-8" }
+      });
     }
 
     /* =========================
@@ -879,6 +1078,10 @@ window.onload=()=>{const pwd=getPwd();if(pwd){document.getElementById('pwdInput'
           <div class="row">
             <div class="row-text"><strong>配置显示名</strong><span>留空自动提取</span></div>
             <div class="input-wrap"><input type="text" id="filename" placeholder="如：我的网络"></div>
+          </div>
+          <div class="row">
+            <div class="row-text"><strong>备注信息</strong><span>仅后台可见，方便区分用途</span></div>
+            <div class="input-wrap"><input type="text" id="remark" placeholder="如：张三-iPhone / 测试专用"></div>
           </div>
           <div class="row">
             <div class="row-text"><strong>短链接后缀</strong><span>留空随机生成</span></div>
@@ -1160,6 +1363,7 @@ async function generateLink(){
     const payload={
       links:text,
       filename:document.getElementById('filename').value.trim()||defaultName||'',
+      remark:document.getElementById('remark').value.trim(),
       alias:document.getElementById('alias').value.trim(),
       universal:document.getElementById('universal').checked,
       tmplUrl:currentSelectedUrl,
