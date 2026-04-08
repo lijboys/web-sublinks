@@ -728,8 +728,8 @@ window.onload=()=>{const pwd=getPwd();if(pwd){document.getElementById('pwdInput'
      * 模块6：前台页面
      * ========================= */
 
-    const workerOrigin = `${url.protocol}//${url.host}`;
-    const bgStyle = env.IMG ? `body{background-image:url('${env.IMG}');background-size:cover;background-position:center;background-attachment:fixed}` : "";
+    const pageWorkerOrigin = `${url.protocol}//${url.host}`;
+    const pageBgStyle = env.IMG ? `body{background-image:url('${env.IMG}');background-size:cover;background-position:center;background-attachment:fixed}` : "";
 
     return textRes(`<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
@@ -747,7 +747,7 @@ window.onload=()=>{const pwd=getPwd();if(pwd){document.getElementById('pwdInput'
     }
     *{box-sizing:border-box}
     body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:40px 20px;display:flex;justify-content:center;transition:.3s}
-    ${bgStyle}
+    ${pageBgStyle}
     .container{width:100%;max-width:1100px}
     .header{text-align:center;margin-bottom:36px}
     .header h1{font-size:32px;font-weight:800;margin:0 0 10px;background:linear-gradient(135deg,var(--primary),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;cursor:pointer;user-select:none}
@@ -943,8 +943,8 @@ try{
 }
 
 let currentTab='paste',uploadedFileText='';
-const domain='${workerOrigin}';
-const panelUrl='${workerOrigin}/panel';
+const domain='${pageWorkerOrigin}';
+const panelUrl='${pageWorkerOrigin}/panel';
 const baseTemplates=[
   {id:'noom',name:'🟢 NooM Pro',url:'https://raw.githubusercontent.com/lijboys/li-rules/refs/heads/main/Rewards/NooM.ini'},
   {id:'none',name:'❌ 纯净节点',url:''}
@@ -1309,3 +1309,5 @@ window.onload=()=>{
 </script>
 </body>
 </html>`, 200, { "Content-Type": "text/html;charset=UTF-8" });
+  }
+};
