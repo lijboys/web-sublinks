@@ -626,12 +626,13 @@ if (url.pathname === "/api/list_subs" && request.method === "POST") {
           }
         }
 
-        const filename = cfg.filename ? encodeURIComponent(cfg.filename) : "My_Config";
+        const rawFilename = (cfg.filename || "My_Config").replace(/[/\\\\?%*:|"<>]/g, "_");
+        const ext = cfg.universal ? "txt" : "yaml";
         const headers = {
           "Content-Type": "text/plain; charset=utf-8",
-          "Content-Disposition": `inline; filename="${filename}.${cfg.universal ? "txt" : "yaml"}"`,
+          "Content-Disposition": `inline; filename="${rawFilename}.${ext}"`,
           "Profile-Update-Interval": "12",
-          "profile-title": decodeURIComponent(filename)
+          "profile-title": rawFilename
         };
         if (cfg.subInfo) headers["Subscription-Userinfo"] = `upload=${cfg.subInfo.up}; download=${cfg.subInfo.down}; total=${cfg.subInfo.total}; expire=${cfg.subInfo.expire}`;
 
@@ -673,12 +674,13 @@ if (url.pathname === "/api/list_subs" && request.method === "POST") {
           } catch {}
         }
 
-        const filename = encodeURIComponent(cfg.filename || "My_Config");
+        const rawFilename = (cfg.filename || "My_Config").replace(/[/\\\\?%*:|"<>]/g, "_");
+        const ext = cfg.universal ? "txt" : "yaml";
         const headers = {
           "Content-Type": "text/plain; charset=utf-8",
-          "Content-Disposition": `inline; filename="${filename}.${cfg.universal ? "txt" : "yaml"}"`,
+          "Content-Disposition": `inline; filename="${rawFilename}.${ext}"`,
           "Profile-Update-Interval": "12",
-          "profile-title": decodeURIComponent(filename)
+          "profile-title": rawFilename
         };
 
         const outText = cfg.universal
