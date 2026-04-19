@@ -1116,7 +1116,7 @@ body{
             <div class="input-wrap"><input type="text" id="filename" placeholder="如：我的网络"></div>
           </div>
           <div class="row">
-            <div class="row-text"><strong>备注信息</strong><span>仅后台可见，方便区分用途</span></div>
+            <div class="row-text"><strong>备注信息</strong><span>没什么用</span></div>
             <div class="input-wrap"><input type="text" id="remark" placeholder="如：张三-iPhone / 测试专用"></div>
           </div>
           <div class="row">
